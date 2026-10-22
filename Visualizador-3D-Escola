@@ -1,0 +1,414 @@
+import itertools
+import math
+import tkinter as tk
+from tkinter import ttk
+
+
+class Visualizador3D:
+    """Visualizador interativo de sólidos geométricos usando apenas Tkinter."""
+
+    BG = "#0b1020"
+    PANEL = "#111a2e"
+    ACCENT = "#7dd3fc"
+    EDGE = "#dbeafe"
+    FACES = "#164e63"
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Visualizador 3D")
+        self.root.geometry("1180x760")
+        self.root.minsize(900, 580)
+        self.root.configure(bg=self.BG)
+
+        self.formas = self._criar_formas()
+        self.categorias = {
+            "Sólidos platônicos": ["Tetraedro", "Cubo", "Octaedro", "Dodecaedro", "Icosaedro"],
+            "Prismas e pirâmides": ["Pirâmide", "Prisma hexagonal"],
+            "Sólidos de revolução": ["Esfera", "Cilindro", "Cone"],
+        }
+        self.descricoes = {
+            "Tetraedro": "4 faces triangulares",
+            "Cubo": "6 faces quadradas",
+            "Octaedro": "8 faces triangulares",
+            "Dodecaedro": "12 faces pentagonais",
+            "Icosaedro": "20 faces triangulares",
+            "Pirâmide": "Base quadrada",
+            "Prisma hexagonal": "Base hexagonal",
+            "Esfera": "Superfície perfeita",
+            "Cilindro": "Duas bases circulares",
+            "Cone": "Base circular",
+        }
+        self.figura_atual = "Cubo"
+        self.modo_renderizacao = "Sólido"
+        self.angulo_x = -0.35
+        self.angulo_y = 0.55
+        self.zoom = 1.0
+        self.arrastando = False
+        self.ultimo_mouse = (0, 0)
+
+        self._montar_interface()
+        self.root.bind("<Configure>", self._redimensionar)
+        self.root.bind("<F11>", self._alternar_tela_cheia)
+        self.root.bind("<Escape>", self._sair_tela_cheia)
+        self._desenhar()
+
+    @staticmethod
+    def _arestas_das_faces(faces):
+        arestas = set()
+        for face in faces:
+            for i, a in enumerate(face):
+                b = face[(i + 1) % len(face)]
+                arestas.add(tuple(sorted((a, b))))
+        return sorted(arestas)
+
+    @staticmethod
+    def _faces_icosaedro(vertices):
+        faces = set()
+        tolerancia = 1e-7
+        for a, b, c in itertools.combinations(range(len(vertices)), 3):
+            p, q, r = vertices[a], vertices[b], vertices[c]
+            u = (q[0]-p[0], q[1]-p[1], q[2]-p[2])
+            v = (r[0]-p[0], r[1]-p[1], r[2]-p[2])
+            n = (u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0])
+            sinais = []
+            for i, ponto in enumerate(vertices):
+                if i in (a, b, c):
+                    continue
+                d = n[0]*(ponto[0]-p[0]) + n[1]*(ponto[1]-p[1]) + n[2]*(ponto[2]-p[2])
+                if abs(d) > tolerancia:
+                    sinais.append(d)
+            if sinais and (all(x > 0 for x in sinais) or all(x < 0 for x in sinais)):
+                faces.add((a, b, c))
+        return sorted(faces)
+
+    @staticmethod
+    def _ordenar_pontos_ao_redor(vertices, indices, eixo):
+        norma = math.sqrt(sum(c*c for c in eixo))
+        w = tuple(c / norma for c in eixo)
+        referencia = (1, 0, 0) if abs(w[0]) < 0.8 else (0, 1, 0)
+        proj = sum(referencia[i]*w[i] for i in range(3))
+        u = tuple(referencia[i] - proj*w[i] for i in range(3))
+        norma_u = math.sqrt(sum(c*c for c in u))
+        u = tuple(c/norma_u for c in u)
+        v = (w[1]*u[2]-w[2]*u[1], w[2]*u[0]-w[0]*u[2], w[0]*u[1]-w[1]*u[0])
+        centro = tuple(sum(vertices[i][j] for i in indices)/len(indices) for j in range(3))
+        return sorted(indices, key=lambda i: math.atan2(
+            sum((vertices[i][j]-centro[j])*v[j] for j in range(3)),
+            sum((vertices[i][j]-centro[j])*u[j] for j in range(3))))
+
+    def _criar_formas(self):
+        formas = {}
+
+        # Sólidos platônicos regulares.
+        cubo_v = [(-1,-1,-1),(1,-1,-1),(1,1,-1),(-1,1,-1),
+                  (-1,-1,1),(1,-1,1),(1,1,1),(-1,1,1)]
+        cubo_f = [(0,1,2,3),(4,7,6,5),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)]
+        formas["Cubo"] = (cubo_v, cubo_f)
+
+        tetra_v = [(1,1,1),(-1,-1,1),(-1,1,-1),(1,-1,-1)]
+        formas["Tetraedro"] = (tetra_v, [(0,1,2),(0,3,1),(0,2,3),(1,3,2)])
+
+        octa_v = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]
+        octa_f = [(0,2,4),(2,1,4),(1,3,4),(3,0,4),(2,0,5),(1,2,5),(3,1,5),(0,3,5)]
+        formas["Octaedro"] = (octa_v, octa_f)
+
+        phi = (1 + math.sqrt(5)) / 2
+        ico_v = [(0,s1,s2*phi) for s1 in (-1,1) for s2 in (-1,1)]
+        ico_v += [(s1,s2*phi,0) for s1 in (-1,1) for s2 in (-1,1)]
+        ico_v += [(s1*phi,0,s2) for s1 in (-1,1) for s2 in (-1,1)]
+        ico_f = self._faces_icosaedro(ico_v)
+        formas["Icosaedro"] = (ico_v, ico_f)
+
+        dodeca_v = [tuple(sum(ico_v[i][j] for i in face)/3 for j in range(3)) for face in ico_f]
+        dodeca_f = []
+        for ico_index, eje in enumerate(ico_v):
+            adjacentes = [i for i, face in enumerate(ico_f) if ico_index in face]
+            dodeca_f.append(self._ordenar_pontos_ao_redor(dodeca_v, adjacentes, eje))
+        formas["Dodecaedro"] = (dodeca_v, dodeca_f)
+
+        # Pirâmide de base quadrada e prisma de base hexagonal.
+        py_v = [(-1,-0.85,-1),(1,-0.85,-1),(1,-0.85,1),(-1,-0.85,1),(0,1.2,0)]
+        formas["Pirâmide"] = (py_v, [(0,3,2,1),(0,1,4),(1,2,4),(2,3,4),(3,0,4)])
+
+        n = 6
+        hex_v = [(math.cos(2*math.pi*i/n), -0.8, math.sin(2*math.pi*i/n)) for i in range(n)]
+        hex_v += [(math.cos(2*math.pi*i/n), 0.8, math.sin(2*math.pi*i/n)) for i in range(n)]
+        hex_f = [tuple(reversed(range(n))), tuple(range(n, 2*n))]
+        hex_f += [(i, (i+1) % n, (i+1) % n+n, i+n) for i in range(n)]
+        formas["Prisma hexagonal"] = (hex_v, hex_f)
+
+        # Malhas para sólidos de revolução.
+        esfera_v, esfera_f = self._malha_esfera(12, 18)
+        formas["Esfera"] = (esfera_v, esfera_f)
+        cilindro_v, cilindro_f = self._malha_cilindro(18)
+        formas["Cilindro"] = (cilindro_v, cilindro_f)
+        cone_v, cone_f = self._malha_cone(18)
+        formas["Cone"] = (cone_v, cone_f)
+        return formas
+
+    @staticmethod
+    def _malha_esfera(rings, segments):
+        vertices = []
+        for j in range(1, rings):
+            latitude = math.pi * j / rings
+            for i in range(segments):
+                longitude = 2 * math.pi * i / segments
+                vertices.append((math.sin(latitude)*math.cos(longitude),
+                                 math.cos(latitude),
+                                 math.sin(latitude)*math.sin(longitude)))
+        topo = len(vertices)
+        vertices.append((0, 1, 0))
+        base = len(vertices)
+        vertices.append((0, -1, 0))
+        faces = []
+        for j in range(rings-2):
+            for i in range(segments):
+                a = j*segments+i
+                b = j*segments+(i+1)%segments
+                c = (j+1)*segments+(i+1)%segments
+                d = (j+1)*segments+i
+                faces.append((a,b,c,d))
+        for i in range(segments):
+            ni = (i+1) % segments
+            faces.append((topo, ni, i))
+            a = (rings-2)*segments+i
+            b = (rings-2)*segments+ni
+            faces.append((base, a, b))
+        return vertices, faces
+
+    @staticmethod
+    def _malha_cilindro(segments):
+        vertices = [(math.cos(2*math.pi*i/segments), y, math.sin(2*math.pi*i/segments))
+                    for y in (-0.9, 0.9) for i in range(segments)]
+        faces = [tuple(reversed(range(segments))), tuple(range(segments, 2*segments))]
+        faces += [(i, (i+1)%segments, (i+1)%segments+segments, i+segments)
+                  for i in range(segments)]
+        return vertices, faces
+
+    @staticmethod
+    def _malha_cone(segments):
+        vertices = [(math.cos(2*math.pi*i/segments), -0.9, math.sin(2*math.pi*i/segments))
+                    for i in range(segments)]
+        apex = len(vertices)
+        vertices.append((0, 1.2, 0))
+        faces = [tuple(reversed(range(segments)))]
+        faces += [(i, (i+1)%segments, apex) for i in range(segments)]
+        return vertices, faces
+
+    def _montar_interface(self):
+        cabecalho = tk.Frame(self.root, bg=self.BG, padx=28, pady=20)
+        cabecalho.pack(fill="x")
+        tk.Label(cabecalho, text="FORMA / 3D", bg=self.BG, fg="#f8fafc",
+                 font=("Segoe UI", 18, "bold")).pack(side="left")
+        tk.Label(cabecalho, text="Explore formas geométricas", bg=self.BG, fg="#94a3b8",
+                 font=("Segoe UI", 10)).pack(side="left", padx=(15, 0), pady=(5, 0))
+
+        corpo = tk.Frame(self.root, bg=self.BG)
+        corpo.pack(fill="both", expand=True, padx=22, pady=(0, 22))
+        self.area = tk.Frame(corpo, bg="#080d19", highlightthickness=1,
+                             highlightbackground="#25334d")
+        self.canvas = tk.Canvas(self.area, bg="#080d19", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self._inicio_arrasto)
+        self.canvas.bind("<B1-Motion>", self._arrastar)
+        self.canvas.bind("<MouseWheel>", self._scroll)
+        self.canvas.bind("<Button-4>", lambda _e: self._alterar_zoom(1.1))
+        self.canvas.bind("<Button-5>", lambda _e: self._alterar_zoom(1/1.1))
+
+        barra = tk.Frame(self.area, bg="#111a2e", padx=14, pady=10)
+        barra.pack(side="bottom", fill="x")
+        tk.Label(barra, text="VISUALIZAÇÃO", bg="#111a2e", fg="#94a3b8",
+                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(2, 12))
+        self.botao_solido = tk.Button(barra, text="Sólido", command=lambda: self._definir_modo("Sólido"),
+                 relief="flat", cursor="hand2", font=("Segoe UI", 9, "bold"), padx=14, pady=7)
+        self.botao_solido.pack(side="left", padx=(0, 6))
+        self.botao_transparente = tk.Button(barra, text="Transparente", command=lambda: self._definir_modo("Transparente"),
+                 relief="flat", cursor="hand2", font=("Segoe UI", 9, "bold"), padx=14, pady=7)
+        self.botao_transparente.pack(side="left")
+        tk.Button(barra, text="⛶  Tela cheia", command=self._alternar_tela_cheia,
+                 bg="#1d2b43", fg="#dbeafe", activebackground="#263a58",
+                 activeforeground="white", relief="flat", cursor="hand2",
+                 font=("Segoe UI", 9, "bold"), padx=12, pady=7).pack(side="right")
+
+        painel = tk.Frame(corpo, bg=self.PANEL, width=280, padx=18, pady=20,
+                          highlightthickness=1, highlightbackground="#25334d")
+        painel.pack(side="left", fill="y", padx=(0, 16))
+        painel.pack_propagate(False)
+        self.area.pack(side="right", fill="both", expand=True)
+        tk.Label(painel, text="BIBLIOTECA DE FORMAS", bg=self.PANEL, fg="#f8fafc",
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        tk.Label(painel, text="Escolha uma figura para visualizar", bg=self.PANEL,
+                 fg="#94a3b8", font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 14))
+
+        estilo = ttk.Style()
+        estilo.theme_use("default")
+        estilo.configure("Formas.Treeview", background=self.PANEL, foreground="#cbd5e1",
+                         fieldbackground=self.PANEL, borderwidth=0, rowheight=31,
+                         font=("Segoe UI", 9))
+        estilo.map("Formas.Treeview", background=[("selected", "#1d3853")],
+                   foreground=[("selected", "#f8fafc")])
+        self.lista = ttk.Treeview(painel, style="Formas.Treeview", show="tree",
+                                  selectmode="browse", height=22, padding=(0, 3))
+        self.lista.pack(fill="both", expand=True)
+        for categoria, nomes in self.categorias.items():
+            self.lista.insert("", "end", iid="cat_" + categoria, text=categoria.upper(), open=True, tags=("categoria",))
+            for nome in nomes:
+                self.lista.insert("cat_" + categoria, "end", iid=nome,
+                                  text=f"  ◇  {nome}  ·  {self.descricoes[nome]}")
+        self.lista.tag_configure("categoria", foreground="#7185a4", font=("Segoe UI", 8, "bold"))
+        self.lista.selection_set(self.figura_atual)
+        self.lista.bind("<<TreeviewSelect>>", self._selecionar_figura)
+        tk.Button(painel, text="Redefinir visualização", command=self._redefinir,
+                  bg="#0e7490", fg="white", activebackground="#155e75",
+                  activeforeground="white", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9, "bold"), padx=10, pady=11).pack(side="bottom", fill="x", pady=(12, 0))
+
+    def _definir_modo(self, modo):
+        self.modo_renderizacao = modo
+        self._atualizar_botoes_modo()
+        self._desenhar()
+
+    def _atualizar_botoes_modo(self):
+        if not hasattr(self, "botao_solido"):
+            return
+        for botao, modo in ((self.botao_solido, "Sólido"),
+                            (self.botao_transparente, "Transparente")):
+            selecionado = self.modo_renderizacao == modo
+            botao.configure(bg="#0e7490" if selecionado else "#1d2b43",
+                            fg="white" if selecionado else "#cbd5e1",
+                            activebackground="#155e75")
+
+    def _alternar_tela_cheia(self, _evento=None):
+        atual = bool(self.root.attributes("-fullscreen"))
+        self.root.attributes("-fullscreen", not atual)
+        return "break"
+
+    def _sair_tela_cheia(self, _evento=None):
+        if bool(self.root.attributes("-fullscreen")):
+            self.root.attributes("-fullscreen", False)
+            return "break"
+
+    def _inicio_arrasto(self, evento):
+        self.arrastando = True
+        self.ultimo_mouse = (evento.x, evento.y)
+
+    def _arrastar(self, evento):
+        if not self.arrastando:
+            return
+        x, y = self.ultimo_mouse
+        # Sensibilidade reduzida para dar mais controle ao movimento.
+        self.angulo_y += (evento.x - x) * 0.004
+        self.angulo_x -= (evento.y - y) * 0.004
+        self.ultimo_mouse = (evento.x, evento.y)
+        self._desenhar()
+
+    def _scroll(self, evento):
+        self._alterar_zoom(1.1 if evento.delta > 0 else 1/1.1)
+
+    def _alterar_zoom(self, fator):
+        self.zoom = max(0.45, min(2.5, self.zoom * fator))
+        self._desenhar()
+
+    def _selecionar_figura(self, _evento=None):
+        selecao = self.lista.selection()
+        if selecao and selecao[0] in self.formas:
+            self.figura_atual = selecao[0]
+            self._desenhar()
+
+    def _redefinir(self):
+        self.angulo_x, self.angulo_y, self.zoom = -0.35, 0.55, 1.0
+        self._desenhar()
+
+    def _redimensionar(self, evento):
+        if evento.widget is self.root:
+            self._desenhar()
+
+    def _desenhar(self):
+        if not hasattr(self, "canvas"):
+            return
+        self.canvas.delete("all")
+        self._atualizar_botoes_modo()
+        largura = max(self.canvas.winfo_width(), 300)
+        altura = max(self.canvas.winfo_height(), 300)
+        centro_x, centro_y = largura/2, altura/2 + 5
+        escala = min(largura, altura) * 0.30 * self.zoom
+
+        self._desenhar_chao(centro_x, centro_y, escala)
+
+        vertices, faces = self.formas[self.figura_atual]
+        projetados, profundidades = [], []
+        for vertice in vertices:
+            x, y, z = self._transformar(vertice)
+            perspectiva = 4.5 / (4.5 + z)
+            projetados.append((centro_x + x*escala*perspectiva,
+                               centro_y - y*escala*perspectiva))
+            profundidades.append(z)
+
+        # Desenha as faces mais distantes primeiro para respeitar a profundidade.
+        if self.modo_renderizacao == "Sólido":
+            faces_ordenadas = sorted(faces,
+                key=lambda face: sum(profundidades[i] for i in face)/len(face), reverse=True)
+            for face in faces_ordenadas:
+                coords = [coordenada for indice in face for coordenada in projetados[indice]]
+                self.canvas.create_polygon(*coords, fill=self.FACES, outline="")
+
+        arestas = self._arestas_das_faces(faces)
+        for a, b in arestas:
+            self.canvas.create_line(*projetados[a], *projetados[b], fill=self.EDGE,
+                                    width=1.6, capstyle="round")
+        for x, y in projetados:
+            self.canvas.create_oval(x-2.5, y-2.5, x+2.5, y+2.5,
+                                    fill=self.ACCENT, outline="#bfdbfe", width=1)
+
+        self.canvas.create_text(20, 20, anchor="nw", text=self.figura_atual,
+                                fill="#f8fafc", font=("Segoe UI", 14, "bold"))
+        self.canvas.create_text(20, 47, anchor="nw", text=self.descricoes[self.figura_atual],
+                                fill="#94a3b8", font=("Segoe UI", 9))
+        self.canvas.create_text(largura-18, 20, anchor="ne",
+                                text="Arraste para girar  ·  Scroll para zoom",
+                                fill="#64748b", font=("Segoe UI", 9))
+
+    def _desenhar_chao(self, cx, cy, escala):
+        """Grade em perspectiva para indicar o plano horizontal e a escala."""
+        limite = 2.4
+        nivel = -1.22
+
+        def ponto(x, z):
+            rx, ry, rz = self._transformar((x, nivel, z))
+            perspectiva = 4.5 / (4.5 + rz)
+            return cx + rx * escala * perspectiva, cy - ry * escala * perspectiva
+
+        # Grade discreta, desenhada antes da figura para ficar ao fundo.
+        passos = 12
+        for i in range(passos + 1):
+            valor = -limite + (2 * limite * i / passos)
+            cor = "#30445f" if i in (0, passos) else "#1d2b40"
+            largura = 1.5 if i in (0, passos) else 1
+            a, b = ponto(valor, -limite), ponto(valor, limite)
+            c, d = ponto(-limite, valor), ponto(limite, valor)
+            self.canvas.create_line(*a, *b, fill=cor, width=largura)
+            self.canvas.create_line(*c, *d, fill=cor, width=largura)
+
+        origem = ponto(0, 0)
+        fim_x = ponto(limite, 0)
+        fim_z = ponto(0, limite)
+        self.canvas.create_line(*origem, *fim_x, fill="#d97777", width=2, arrow="last")
+        self.canvas.create_line(*origem, *fim_z, fill="#57b994", width=2, arrow="last")
+    def _transformar(self, vertice):
+        x, y, z = vertice
+        cy, sy = math.cos(self.angulo_y), math.sin(self.angulo_y)
+        cx, sx = math.cos(self.angulo_x), math.sin(self.angulo_x)
+        x, z = x*cy - z*sy, x*sy + z*cy
+        y, z = y*cx - z*sx, y*sx + z*cx
+        return x, y, z
+
+
+def main():
+    root = tk.Tk()
+    Visualizador3D(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+
