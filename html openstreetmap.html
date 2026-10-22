@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Viabilidade Imobiliária Pro</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0284c7',
+                            600: '#0369a1',
+                            700: '#035486',
+                            800: '#075985',
+                            900: '#0c4a6e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Leaflet Geoman (Draw tools) -->
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.css" />
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.js"></script>
+
+    <!-- Turf.js for advanced area/geometry calculations -->
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+            z-index: 1;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.5);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(107, 114, 128, 0.8);
+        }
+        
+        /* Print Styles */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #report-modal, #report-modal * {
+                visibility: visible;
+            }
+            #report-modal {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: auto;
+                background: white !important;
+                color: black !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="h-full bg-slate-900 text-slate-100 flex flex-col antialiased overflow-hidden">
+
+    <!-- Header / Navbar -->
+    <header class="h-16 bg-slate-800/90 backdrop-blur border-b border-slate-700/60 px-4 flex items-center justify-between z-20 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="p-2 bg-brand-600 rounded-lg text-white shadow-lg shadow-brand-600/30">
+                <i data-lucide="building-2" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-tight text-white flex items-center gap-2">
+                    GeoViabilidade <span class="text-xs font-semibold px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 border border-brand-500/30">PRO</span>
+                </h1>
+                <p class="text-xs text-slate-400">Simulador de Estudos de Viabilidade Imobiliária</p>
+            </div>
+        </div>
+
+        <!-- Search Bar in Header -->
+        <div class="hidden md:flex items-center flex-1 max-w-md mx-8 relative">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3 text-slate-400"></i>
+            <input type="text" id="address-input" placeholder="Buscar endereço ou cidade..." 
+                class="w-full pl-9 pr-24 py-2 bg-slate-900/80 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all">
+            <button id="search-btn" class="absolute right-1 top-1 bottom-1 px-3 bg-brand-600 hover:bg-brand-500 text-xs font-medium rounded-md text-white transition-colors flex items-center gap-1">
+                Buscar
+            </button>
+        </div>
+
+        <!-- Quick Controls -->
+        <div class="flex items-center gap-2">
+            <button id="toggle-sidebar-btn" class="lg:hidden p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-200 transition-colors">
+                <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+            </button>
+            <button id="export-report-btn" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span class="hidden sm:inline">Gerar Relatório</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex relative overflow-hidden">
+
+        <!-- Map Container -->
+        <div class="flex-1 relative h-full">
+            <div id="map"></div>
+
+            <!-- Map Floating Info Badge -->
+            <div class="absolute top-4 right-4 z-[1000] bg-slate-900/90 backdrop-blur border border-slate-700/80 rounded-xl p-3 shadow-xl max-w-xs text-xs space-y-1">
+                <div class="font-semibold text-slate-300 flex items-center gap-1.5">
+                    <i data-lucide="mouse-pointer" class="w-3.5 h-3.5 text-brand-400"></i>
+                    Instruções
+                </div>
+                <p class="text-slate-400">Use o menu no mapa à esquerda para desenhar um polígono ou forma geométrica representando o terreno.</p>
+            </div>
+
+            <!-- Quick Map Controls Floating Panel -->
+            <div class="absolute bottom-6 left-4 z-[1000] bg-slate-900/90 backdrop-blur border border-slate-700 rounded-xl p-2 shadow-xl flex items-center gap-2">
+                <button id="clear-drawings" class="px-2.5 py-1.5 bg-slate-800 hover:bg-red-500/20 hover:text-red-400 text-slate-300 text-xs rounded-lg transition-colors flex items-center gap-1 border border-slate-700">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    Limpar Desenho
+                </button>
+                <div class="h-4 w-px bg-slate-700"></div>
+                <span class="text-xs text-slate-400 px-1">Área Medida:</span>
+                <span id="map-area-display" class="text-xs font-bold text-brand-400 font-mono bg-slate-800 px-2 py-1 rounded">0 m²</span>
+            </div>
+        </div>
+
+        <!-- Sidebar Panel -->
+        <aside id="sidebar" class="w-full lg:w-[450px] bg-slate-800 border-l border-slate-700/80 flex flex-col h-full absolute lg:relative right-0 top-0 z-30 transition-transform duration-300 transform translate-x-full lg:translate-x-0 shadow-2xl">
+            
+            <!-- Sidebar Header Tabs -->
+            <div class="flex border-b border-slate-700 bg-slate-800/80 text-sm font-medium">
+                <button id="tab-btn-params" onclick="switchTab('params')" class="flex-1 py-3 px-4 text-center border-b-2 border-brand-500 text-brand-400 font-semibold flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="settings" class="w-4 h-4"></i> Parâmetros
+                </button>
+                <button id="tab-btn-finance" onclick="switchTab('finance')" class="flex-1 py-3 px-4 text-center border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="line-chart" class="w-4 h-4"></i> Resultados
+                </button>
+            </div>
+
+            <!-- Sidebar Scrollable Body -->
+            <div class="flex-1 overflow-y-auto p-5 space-y-6">
+
+                <!-- TAB 1: PARÂMETROS DA CONSTRUÇÃO -->
+                <div id="tab-params" class="space-y-6">
+                    
+                    <!-- Terreno Section -->
+                    <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700/60 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                                <i data-lucide="map-pin" class="w-4 h-4 text-brand-400"></i> Dados do Terreno
+                            </h3>
+                            <span class="text-xs text-slate-400">Automático pelo Mapa</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Área do Terreno (m²)</label>
+                                <input type="number" id="input-land-area" value="1000" min="1" 
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Custo Estimado/m² Solo (R$)</label>
+                                <input type="number" id="input-land-cost-m2" value="800" min="0" step="50"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tipo de Empreendimento -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Tipo de Empreendimento</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button id="type-residential" onclick="setProjectType('residential')" class="py-2.5 px-3 rounded-xl border-2 border-brand-500 bg-brand-500/10 text-brand-400 font-medium text-xs flex items-center justify-center gap-2 transition-all">
+                                <i data-lucide="home" class="w-4 h-4"></i> Residencial
+                            </button>
+                            <button id="type-commercial" onclick="setProjectType('commercial')" class="py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-900 text-slate-400 font-medium text-xs flex items-center justify-center gap-2 hover:border-slate-600 transition-all">
+                                <i data-lucide="store" class="w-4 h-4"></i> Comercial
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Configuração do Edifício -->
+                    <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700/60 space-y-4">
+                        <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                            <i data-lucide="layers" class="w-4 h-4 text-brand-400"></i> Modelo da Edificação
+                        </h3>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Nº Pavimentos / Andares</label>
+                                <input type="number" id="input-floors" value="8" min="1" max="60"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Taxa Ocupação Terreno (%)</label>
+                                <input type="number" id="input-occupancy-rate" value="60" min="10" max="100"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Unidades por Andar</label>
+                                <input type="number" id="input-units-per-floor" value="4" min="1" max="30"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Área Média/Unidade (m²)</label>
+                                <input type="number" id="input-unit-size" value="75" min="15" max="500"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">Padrão de Acabamento</label>
+                            <select id="input-finish-standard" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-brand-500">
+                                <option value="economic">Econômico (CUB R$ 1.850/m²)</option>
+                                <option value="medium" selected>Médio (CUB R$ 2.450/m²)</option>
+                                <option value="luxury">Alto Padrão / Luxo (CUB R$ 3.600/m²)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Parâmetros Financeiros / Premissas -->
+                    <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700/60 space-y-4">
+                        <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                            <i data-lucide="badge-dollar-sign" class="w-4 h-4 text-emerald-400"></i> Valoração e Vendas
+                        </h3>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Preço Venda m² (R$)</label>
+                                <input type="number" id="input-sale-price-m2" value="7500" min="1000" step="250"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Projetos & Tx Adm (%)</label>
+                                <input type="number" id="input-soft-costs-percent" value="12" min="0" max="30"
+                                    class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono text-sm focus:outline-none focus:border-brand-500">
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- TAB 2: RESULTADOS DA SIMULAÇÃO -->
+                <div id="tab-finance" class="space-y-6 hidden">
+                    
+                    <!-- Top Metrics Grid -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-700/70">
+                            <span class="text-xs text-slate-400">Total de Unidades</span>
+                            <div id="res-total-units" class="text-xl font-bold text-white font-mono mt-0.5">32</div>
+                            <span id="res-unit-label" class="text-[10px] text-brand-400 font-medium">Apartamentos</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-700/70">
+                            <span class="text-xs text-slate-400">Área Construída Total</span>
+                            <div id="res-total-built-area" class="text-xl font-bold text-white font-mono mt-0.5">4.800 m²</div>
+                            <span class="text-[10px] text-slate-400">Área Privativa: <span id="res-private-area" class="text-slate-200 font-mono">2.400 m²</span></span>
+                        </div>
+                    </div>
+
+                    <!-- Highlight Viability Box -->
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/90 p-4 rounded-xl border border-slate-700/80 space-y-3 relative overflow-hidden">
+                        <div class="absolute -right-4 -bottom-4 opacity-5 text-emerald-400">
+                            <i data-lucide="trending-up" class="w-32 h-32"></i>
+                        </div>
+
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                            <span class="text-xs text-slate-400 uppercase tracking-wider font-semibold">VGV Estimado (Faturamento)</span>
+                            <span id="res-vgv" class="text-lg font-bold text-emerald-400 font-mono">R$ 18.000.000</span>
+                        </div>
+
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                            <span class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Custo Total Empreendimento</span>
+                            <span id="res-total-cost" class="text-base font-semibold text-rose-400 font-mono">R$ 12.500.000</span>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-1">
+                            <div>
+                                <span class="text-xs text-slate-400 font-semibold uppercase block">Lucro Bruto Previsto</span>
+                                <span id="res-profit" class="text-xl font-extrabold text-brand-400 font-mono">R$ 5.500.000</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs text-slate-400 font-semibold uppercase block">Margem / ROI</span>
+                                <span id="res-roi" class="text-lg font-bold text-emerald-400 font-mono">44.0 %</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Single Unit Economics -->
+                    <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700/60 space-y-2">
+                        <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 flex items-center justify-between">
+                            <span>Métricas Unitárias</span>
+                            <i data-lucide="calculator" class="w-3.5 h-3.5 text-slate-400"></i>
+                        </h4>
+
+                        <div class="flex justify-between items-center text-xs py-1 border-b border-slate-800">
+                            <span class="text-slate-400">Custo Estimado por Unidade:</span>
+                            <span id="res-cost-per-unit" class="font-mono text-slate-200 font-medium">R$ 390.625</span>
+                        </div>
+                        <div class="flex justify-between items-center text-xs py-1 border-b border-slate-800">
+                            <span class="text-slate-400">Preço de Venda por Unidade:</span>
+                            <span id="res-sale-per-unit" class="font-mono text-emerald-400 font-medium">R$ 562.500</span>
+                        </div>
+                        <div class="flex justify-between items-center text-xs py-1">
+                            <span class="text-slate-400">Lucro Estimado por Unidade:</span>
+                            <span id="res-profit-per-unit" class="font-mono text-brand-400 font-semibold">R$ 171.875</span>
+                        </div>
+                    </div>
+
+                    <!-- Cost Breakdown Chart -->
+                    <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700/60 space-y-3">
+                        <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Composição dos Custos</h4>
+                        <div class="relative h-48 w-full">
+                            <canvas id="costChart"></canvas>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+            
+            <!-- Sidebar Footer -->
+            <div class="p-4 border-t border-slate-700/80 bg-slate-900/60 text-xs text-slate-400 flex items-center justify-between">
+                <span>CUB/m² baseado nos índices médios estaduais.</span>
+                <span class="font-mono text-slate-500">v1.2</span>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- REPORT MODAL (For Print / PDF Export) -->
+    <div id="report-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full p-6 space-y-6 shadow-2xl relative text-slate-100 my-8">
+            
+            <!-- Modal Header -->
+            <div class="flex items-center justify-between border-b border-slate-800 pb-4 no-print">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="file-check" class="w-5 h-5 text-emerald-400"></i>
+                    <h2 class="text-lg font-bold">Relatório Estudo de Viabilidade</h2>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="window.print()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1">
+                        <i data-lucide="printer" class="w-3.5 h-3.5"></i> Imprimir / PDF
+                    </button>
+                    <button onclick="toggleReportModal(false)" class="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Printable Document Area -->
+            <div id="printable-content" class="space-y-6">
+                <!-- Report Header Info -->
+                <div class="flex justify-between items-start border-b border-slate-700 pb-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Estudo Preliminar de Viabilidade Imobiliária</h1>
+                        <p class="text-xs text-slate-400 mt-1">Gerado via GeoViabilidade PRO • Data: <span id="report-date"></span></p>
+                    </div>
+                    <div class="text-right">
+                        <span id="report-type-badge" class="px-3 py-1 rounded-full text-xs font-bold bg-brand-500/20 text-brand-400 border border-brand-500/30">
+                            Residencial
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Land & Building Summary Grid -->
+                <div class="grid grid-cols-2 gap-4 text-xs">
+                    <div class="bg-slate-800/60 p-4 rounded-xl border border-slate-700/50 space-y-2">
+                        <h3 class="font-bold text-slate-300 border-b border-slate-700 pb-1">1. Parâmetros do Terreno & Edificação</h3>
+                        <div class="flex justify-between"><span class="text-slate-400">Área do Terreno:</span><span id="rep-land-area" class="font-mono font-semibold">1.000 m²</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">Taxa de Ocupação:</span><span id="rep-occupancy" class="font-mono">60%</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">Nº de Pavimentos:</span><span id="rep-floors" class="font-mono">8</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">Área Construída Total:</span><span id="rep-built-area" class="font-mono font-semibold text-brand-400">4.800 m²</span></div>
+                    </div>
+
+                    <div class="bg-slate-800/60 p-4 rounded-xl border border-slate-700/50 space-y-2">
+                        <h3 class="font-bold text-slate-300 border-b border-slate-700 pb-1">2. Programa de Unidades</h3>
+                        <div class="flex justify-between"><span class="text-slate-400">Total de Unidades:</span><span id="rep-total-units" class="font-mono font-semibold">32</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">Área Privativa por Unidade:</span><span id="rep-unit-size" class="font-mono">75 m²</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">Área Privativa Total:</span><span id="rep-private-area" class="font-mono">2.400 m²</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">Padrão Acabamento:</span><span id="rep-finish-standard" class="font-mono">Médio</span></div>
+                    </div>
+                </div>
+
+                <!-- Financial Synthesis -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 space-y-3">
+                    <h3 class="font-bold text-sm text-slate-200 border-b border-slate-700 pb-2">3. Síntese Financeira e Retorno</h3>
+                    
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                        <div class="p-2 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                            <span class="text-[10px] text-slate-400 block uppercase">VGV Total</span>
+                            <span id="rep-vgv" class="text-sm font-bold text-emerald-400 font-mono">R$ 18.000.000</span>
+                        </div>
+                        <div class="p-2 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                            <span class="text-[10px] text-slate-400 block uppercase">Custo Total Estimado</span>
+                            <span id="rep-cost" class="text-sm font-bold text-rose-400 font-mono">R$ 12.500.000</span>
+                        </div>
+                        <div class="p-2 bg-slate-900/60 rounded-lg border border-slate-700/50">
+                            <span class="text-[10px] text-slate-400 block uppercase">Lucro Bruto / Margem</span>
+                            <span id="rep-profit" class="text-sm font-bold text-brand-400 font-mono">R$ 5.500.000 (44%)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Disclaimer -->
+                <p class="text-[10px] text-slate-500 italic leading-relaxed pt-2">
+                    * Este relatório consiste em uma simulação preliminar baseada em médias paramétricas de CUB/m² e estimativas de mercado. Não substitui o projeto executivo e estudo de viabilidade jurídica e EVTL completo por profissional habilitado.
+                </p>
+            </div>
+
+            <!-- Modal Footer Controls -->
+            <div class="flex justify-end gap-3 border-t border-slate-800 pt-4 no-print">
+                <button onclick="toggleReportModal(false)" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold">
+                    Fechar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Script Logic -->
+    <script>
+        // Global Application State
+        const state = {
+            projectType: 'residential', // 'residential' | 'commercial'
+            landArea: 1000,             // m²
+            landCostPerM2: 800,         // R$ / m²
+            floors: 8,                  // Num floors
+            occupancyRate: 60,          // Percentage
+            unitsPerFloor: 4,           // Units per floor
+            unitSize: 75,               // m²
+            finishStandard: 'medium',   // 'economic' | 'medium' | 'luxury'
+            salePricePerM2: 7500,       // R$ / m²
+            softCostsPercent: 12,       // % admin, projects, fees
+            
+            // CUB Indexes (R$ / m²)
+            cubRates: {
+                economic: 1850,
+                medium: 2450,
+                luxury: 3600
+            }
+        };
+
+        // DOM Element Cache
+        const elements = {
+            inputLandArea: document.getElementById('input-land-area'),
+            inputLandCostM2: document.getElementById('input-land-cost-m2'),
+            inputFloors: document.getElementById('input-floors'),
+            inputOccupancyRate: document.getElementById('input-occupancy-rate'),
+            inputUnitsPerFloor: document.getElementById('input-units-per-floor'),
+            inputUnitSize: document.getElementById('input-unit-size'),
+            inputFinishStandard: document.getElementById('input-finish-standard'),
+            inputSalePriceM2: document.getElementById('input-sale-price-m2'),
+            inputSoftCostsPercent: document.getElementById('input-soft-costs-percent'),
+            
+            // Displays
+            resTotalUnits: document.getElementById('res-total-units'),
+            resUnitLabel: document.getElementById('res-unit-label'),
+            resTotalBuiltArea: document.getElementById('res-total-built-area'),
+            resPrivateArea: document.getElementById('res-private-area'),
+            resVgv: document.getElementById('res-vgv'),
+            resTotalCost: document.getElementById('res-total-cost'),
+            resProfit: document.getElementById('res-profit'),
+            resRoi: document.getElementById('res-roi'),
+            resCostPerUnit: document.getElementById('res-cost-per-unit'),
+            resSalePerUnit: document.getElementById('res-sale-per-unit'),
+            resProfitPerUnit: document.getElementById('res-profit-per-unit'),
+            mapAreaDisplay: document.getElementById('map-area-display'),
+            
+            // Buttons
+            typeResidentialBtn: document.getElementById('type-residential'),
+            typeCommercialBtn: document.getElementById('type-commercial'),
+            
+            // Tabs & Sidebar
+            tabParams: document.getElementById('tab-params'),
+            tabFinance: document.getElementById('tab-finance'),
+            tabBtnParams: document.getElementById('tab-btn-params'),
+            tabBtnFinance: document.getElementById('tab-btn-finance'),
+            sidebar: document.getElementById('sidebar'),
+            toggleSidebarBtn: document.getElementById('toggle-sidebar-btn')
+        };
+
+        let map, drawnItems, costChart;
+
+        // Initialize App
+        window.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            initMap();
+            initChart();
+            bindEvents();
+            calculateViability();
+        });
+
+        // Initialize OpenStreetMap with Leaflet & Leaflet Geoman
+        function initMap() {
+            // Default center: São Paulo/Brazil or general central urban coordinates
+            map = L.map('map', { zoomControl: false }).setView([-23.55052, -46.633308], 15);
+
+            // Add Zoom Control at bottom right
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+            // Add OpenStreetMap Tile Layer
+            L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19
+}).addTo(map);
+
+            // Layer group for drawn shapes
+            drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+
+            // Geoman Draw Controls Setup
+            map.pm.addControls({
+                position: 'topleft',
+                drawPolygon: true,
+                drawRectangle: true,
+                drawCircle: true,
+                editMode: true,
+                dragMode: false,
+                cutPolygon: false,
+                removalMode: true
+            });
+
+            // Geoman Event Handlers
+            map.on('pm:create', (e) => {
+                // Clear previous shapes if single site selection is desired
+                drawnItems.clearLayers();
+                const layer = e.layer;
+                drawnItems.addLayer(layer);
+                updateAreaFromLayer(layer);
+
+                // Listen for edits on this layer
+                layer.on('pm:edit', () => {
+                    updateAreaFromLayer(layer);
+                });
+            });
+
+            map.on('pm:remove', () => {
+                if (drawnItems.getLayers().length === 0) {
+                    elements.mapAreaDisplay.textContent = '0 m²';
+                }
+            });
+        }
+
+        // Calculate polygon or shape area using Turf.js
+        function updateAreaFromLayer(layer) {
+            let areaGeo = 0;
+            const geojson = layer.toGeoJSON();
+
+            if (layer instanceof L.Circle) {
+                const radius = layer.getRadius();
+                areaGeo = Math.PI * radius * radius;
+            } else {
+                areaGeo = turf.area(geojson);
+            }
+
+            const areaRounded = Math.round(areaGeo);
+            elements.mapAreaDisplay.textContent = `${areaRounded.toLocaleString('pt-BR')} m²`;
+            elements.inputLandArea.value = areaRounded;
+            state.landArea = areaRounded;
+            calculateViability();
+        }
+
+        // Switch Tabs in Sidebar
+        function switchTab(tabName) {
+            if (tabName === 'params') {
+                elements.tabParams.classList.remove('hidden');
+                elements.tabFinance.classList.add('hidden');
+                elements.tabBtnParams.className = "flex-1 py-3 px-4 text-center border-b-2 border-brand-500 text-brand-400 font-semibold flex items-center justify-center gap-2 transition-colors";
+                elements.tabBtnFinance.className = "flex-1 py-3 px-4 text-center border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-2 transition-colors";
+            } else {
+                elements.tabParams.classList.add('hidden');
+                elements.tabFinance.classList.remove('hidden');
+                elements.tabBtnFinance.className = "flex-1 py-3 px-4 text-center border-b-2 border-brand-500 text-brand-400 font-semibold flex items-center justify-center gap-2 transition-colors";
+                elements.tabBtnParams.className = "flex-1 py-3 px-4 text-center border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-2 transition-colors";
+            }
+        }
+
+        // Set Project Type (Residencial vs Comercial)
+        function setProjectType(type) {
+            state.projectType = type;
+            if (type === 'residential') {
+                elements.typeResidentialBtn.className = "py-2.5 px-3 rounded-xl border-2 border-brand-500 bg-brand-500/10 text-brand-400 font-medium text-xs flex items-center justify-center gap-2 transition-all";
+                elements.typeCommercialBtn.className = "py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-900 text-slate-400 font-medium text-xs flex items-center justify-center gap-2 hover:border-slate-600 transition-all";
+                elements.resUnitLabel.textContent = "Apartamentos";
+            } else {
+                elements.typeCommercialBtn.className = "py-2.5 px-3 rounded-xl border-2 border-brand-500 bg-brand-500/10 text-brand-400 font-medium text-xs flex items-center justify-center gap-2 transition-all";
+                elements.typeResidentialBtn.className = "py-2.5 px-3 rounded-xl border border-slate-700 bg-slate-900 text-slate-400 font-medium text-xs flex items-center justify-center gap-2 hover:border-slate-600 transition-all";
+                elements.resUnitLabel.textContent = "Salas / Lojas";
+            }
+            calculateViability();
+        }
+
+        // Bind UI Event Listeners
+        function bindEvents() {
+            // Inputs change handler
+            const inputs = [
+                elements.inputLandArea, elements.inputLandCostM2, elements.inputFloors,
+                elements.inputOccupancyRate, elements.inputUnitsPerFloor, elements.inputUnitSize,
+                elements.inputFinishStandard, elements.inputSalePriceM2, elements.inputSoftCostsPercent
+            ];
+
+            inputs.forEach(input => {
+                input.addEventListener('input', () => {
+                    readInputs();
+                    calculateViability();
+                });
+            });
+
+            // Address Search Button
+            document.getElementById('search-btn').addEventListener('click', geocodeAddress);
+            document.getElementById('address-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') geocodeAddress();
+            });
+
+            // Clear drawings button
+            document.getElementById('clear-drawings').addEventListener('click', () => {
+                drawnItems.clearLayers();
+                elements.mapAreaDisplay.textContent = '0 m²';
+            });
+
+            // Mobile sidebar toggle
+            elements.toggleSidebarBtn.addEventListener('click', () => {
+                elements.sidebar.classList.toggle('translate-x-full');
+            });
+
+            // Export Modal Trigger
+            document.getElementById('export-report-btn').addEventListener('click', () => {
+                updateReportData();
+                toggleReportModal(true);
+            });
+        }
+
+        // Read current state values from Form
+        function readInputs() {
+            state.landArea = parseFloat(elements.inputLandArea.value) || 0;
+            state.landCostPerM2 = parseFloat(elements.inputLandCostM2.value) || 0;
+            state.floors = parseInt(elements.inputFloors.value) || 1;
+            state.occupancyRate = parseFloat(elements.inputOccupancyRate.value) || 0;
+            state.unitsPerFloor = parseInt(elements.inputUnitsPerFloor.value) || 1;
+            state.unitSize = parseFloat(elements.inputUnitSize.value) || 0;
+            state.finishStandard = elements.inputFinishStandard.value;
+            state.salePricePerM2 = parseFloat(elements.inputSalePriceM2.value) || 0;
+            state.softCostsPercent = parseFloat(elements.inputSoftCostsPercent.value) || 0;
+        }
+
+        // Main Financial and Architectural Calculation Engine
+        function calculateViability() {
+            // Total units calculation
+            const totalUnits = state.floors * state.unitsPerFloor;
+            
+            // Area Calculations
+            const footprintArea = state.landArea * (state.occupancyRate / 100);
+            const totalBuiltArea = footprintArea * state.floors;
+            const totalPrivateArea = totalUnits * state.unitSize;
+
+            // Financial Calculations
+            const landTotalCost = state.landArea * state.landCostPerM2;
+            const cubBaseRate = state.cubRates[state.finishStandard] || 2450;
+            
+            // Direct Construction Cost
+            const constructionCost = totalBuiltArea * cubBaseRate;
+            
+            // Soft Costs (Projects, Admin, Legal Fees, Licencing)
+            const softCosts = constructionCost * (state.softCostsPercent / 100);
+            
+            // Grand Total Cost
+            const totalCost = landTotalCost + constructionCost + softCosts;
+
+            // Revenue / VGV (Valor Geral de Vendas)
+            const vgv = totalPrivateArea * state.salePricePerM2;
+
+            // Profit & ROI
+            const grossProfit = vgv - totalCost;
+            const roiPercent = totalCost > 0 ? (grossProfit / totalCost) * 100 : 0;
+
+            // Unit Metrics
+            const costPerUnit = totalUnits > 0 ? totalCost / totalUnits : 0;
+            const salePerUnit = totalUnits > 0 ? vgv / totalUnits : 0;
+            const profitPerUnit = salePerUnit - costPerUnit;
+
+            // Update DOM Outputs
+            elements.resTotalUnits.textContent = totalUnits.toLocaleString('pt-BR');
+            elements.resTotalBuiltArea.textContent = `${Math.round(totalBuiltArea).toLocaleString('pt-BR')} m²`;
+            elements.resPrivateArea.textContent = `${Math.round(totalPrivateArea).toLocaleString('pt-BR')} m²`;
+
+            elements.resVgv.textContent = formatCurrency(vgv);
+            elements.resTotalCost.textContent = formatCurrency(totalCost);
+            elements.resProfit.textContent = formatCurrency(grossProfit);
+            elements.resRoi.textContent = `${roiPercent.toFixed(1)} %`;
+
+            elements.resCostPerUnit.textContent = formatCurrency(costPerUnit);
+            elements.resSalePerUnit.textContent = formatCurrency(salePerUnit);
+            elements.resProfitPerUnit.textContent = formatCurrency(profitPerUnit);
+
+            // Update Chart
+            updateChart(landTotalCost, constructionCost, softCosts, Math.max(0, grossProfit));
+        }
+
+        // Format Currency Helper
+        function formatCurrency(val) {
+            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(val);
+        }
+
+        // Geocoding with OpenStreetMap Nominatim
+        function geocodeAddress() {
+            const query = document.getElementById('address-input').value;
+            if (!query) return;
+
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        const lat = parseFloat(data[0].lat);
+                        const lon = parseFloat(data[0].lon);
+                        map.setView([lat, lon], 17);
+                    } else {
+                        alert('Endereço não encontrado. Tente termos mais específicos.');
+                    }
+                })
+                .catch(err => {
+                    console.error('Erro na busca de endereço:', err);
+                });
+        }
+
+        // Chart.js Setup and Update
+        function initChart() {
+            const ctx = document.getElementById('costChart').getContext('2d');
+            costChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Aquisiç. Terreno', 'Obra (CUB)', 'Projetos/Adm', 'Margem Bruta'],
+                    datasets: [{
+                        data: [15, 55, 10, 20],
+                        backgroundColor: [
+                            '#0284c7', // Brand blue
+                            '#f43f5e', // Rose
+                            '#eab308', // Amber
+                            '#10b981'  // Emerald
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                color: '#94a3b8',
+                                font: { size: 10, family: 'Inter' },
+                                boxWidth: 12
+                            }
+                        }
+                    },
+                    cutout: '70%'
+                }
+            });
+        }
+
+        function updateChart(land, construction, soft, profit) {
+            if (!costChart) return;
+            costChart.data.datasets[0].data = [land, construction, soft, profit];
+            costChart.update();
+        }
+
+        // Populate and Toggle Printable Report Modal
+        function updateReportData() {
+            document.getElementById('report-date').textContent = new Date().toLocaleDateString('pt-BR');
+            document.getElementById('report-type-badge').textContent = state.projectType === 'residential' ? 'Residencial' : 'Comercial';
+
+            document.getElementById('rep-land-area').textContent = `${state.landArea.toLocaleString('pt-BR')} m²`;
+            document.getElementById('rep-occupancy').textContent = `${state.occupancyRate}%`;
+            document.getElementById('rep-floors').textContent = state.floors;
+            
+            const totalBuilt = state.landArea * (state.occupancyRate / 100) * state.floors;
+            const totalUnits = state.floors * state.unitsPerFloor;
+            const totalPrivate = totalUnits * state.unitSize;
+
+            document.getElementById('rep-built-area').textContent = `${Math.round(totalBuilt).toLocaleString('pt-BR')} m²`;
+            document.getElementById('rep-total-units').textContent = totalUnits;
+            document.getElementById('rep-unit-size').textContent = `${state.unitSize} m²`;
+            document.getElementById('rep-private-area').textContent = `${Math.round(totalPrivate).toLocaleString('pt-BR')} m²`;
+            
+            const standardMap = { economic: 'Econômico', medium: 'Médio', luxury: 'Alto Padrão / Luxo' };
+            document.getElementById('rep-finish-standard').textContent = standardMap[state.finishStandard];
+
+            // Financials
+            const landCost = state.landArea * state.landCostPerM2;
+            const constCost = totalBuilt * (state.cubRates[state.finishStandard] || 2450);
+            const softCost = constCost * (state.softCostsPercent / 100);
+            const totalCost = landCost + constCost + softCost;
+            const vgv = totalPrivate * state.salePricePerM2;
+            const profit = vgv - totalCost;
+            const roi = totalCost > 0 ? (profit / totalCost) * 100 : 0;
+
+            document.getElementById('rep-vgv').textContent = formatCurrency(vgv);
+            document.getElementById('rep-cost').textContent = formatCurrency(totalCost);
+            document.getElementById('rep-profit').textContent = `${formatCurrency(profit)} (${roi.toFixed(1)}%)`;
+        }
+
+        function toggleReportModal(show) {
+            const modal = document.getElementById('report-modal');
+            if (show) {x
+                modal.classList.remove('hidden');
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
