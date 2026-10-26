@@ -1,0 +1,480 @@
+import itertools
+import math
+import tkinter as tk
+from tkinter import ttk
+
+
+class Visualizador3D:
+    """Visualizador 3D interativo sem dependências além do Python e Tkinter."""
+
+    BG = "#090e18"
+    SIDEBAR = "#0c121e"
+    PANEL = "#111a2a"
+    TEXT = "#e8eef8"
+    MUTED = "#8291a8"
+    ACCENT = "#60a5fa"
+    EDGE = "#dbeafe"
+    OBJECT_COLOR = "#4388d0"
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Visualizador 3D")
+        self.root.geometry("1440x900")
+        self.root.minsize(980, 640)
+        self.root.configure(bg=self.BG)
+
+        self.formas = self._criar_formas()
+        self.categorias = {
+            "Sólidos platônicos": ["Tetraedro", "Cubo", "Octaedro", "Dodecaedro", "Icosaedro"],
+            "Prismas e pirâmides": ["Pirâmide", "Prisma hexagonal"],
+            "Sólidos de revolução": ["Esfera", "Cilindro", "Cone"],
+        }
+        self.descricoes = {
+            "Tetraedro": "Um sólido regular com quatro faces triangulares congruentes.",
+            "Cubo": "Também chamado de hexaedro regular: seis quadrados iguais e ângulos retos.",
+            "Octaedro": "Oito faces triangulares organizadas em torno do centro.",
+            "Dodecaedro": "Doze faces pentagonais formam este sólido regular.",
+            "Icosaedro": "Vinte faces triangulares compõem o sólido regular.",
+            "Pirâmide": "Uma base quadrada ligada a quatro faces triangulares.",
+            "Prisma hexagonal": "Duas bases hexagonais paralelas unidas por faces laterais.",
+            "Esfera": "Todos os pontos da superfície ficam à mesma distância do centro.",
+            "Cilindro": "Duas bases circulares paralelas conectadas por uma superfície curva.",
+            "Cone": "Uma base circular se estreita até encontrar um único vértice.",
+        }
+        self.estatisticas = {
+            "Tetraedro": ("4", "6", "4"), "Cubo": ("6", "12", "8"),
+            "Octaedro": ("8", "12", "6"), "Dodecaedro": ("12", "30", "20"),
+            "Icosaedro": ("20", "30", "12"), "Pirâmide": ("5", "8", "5"),
+            "Prisma hexagonal": ("8", "18", "12"),
+            "Esfera": ("1 superfície", "0", "0"),
+            "Cilindro": ("3 superfícies", "2", "0"),
+            "Cone": ("2 superfícies", "1", "1"),
+        }
+        self.figura_atual = "Cubo"
+        self.modo = "Sólido"
+        self.angulo_x = -0.34
+        self.angulo_y = 0.54
+        self.zoom = 1.0
+        self.arrastando = False
+        self.ultimo_mouse = (0, 0)
+        self.rotacao_automatica = False
+        self._resize_job = None
+
+        self._montar_interface()
+        self.root.bind("<F11>", self._alternar_tela_cheia)
+        self.root.bind("<Escape>", self._sair_tela_cheia)
+        self._animar()
+        self.root.after(80, self._desenhar)
+
+    @staticmethod
+    def _arestas(faces):
+        arestas = set()
+        for face in faces:
+            for i, a in enumerate(face):
+                arestas.add(tuple(sorted((a, face[(i + 1) % len(face)]))))
+        return sorted(arestas)
+
+    @staticmethod
+    def _faces_icosaedro(vertices):
+        faces = set()
+        for a, b, c in itertools.combinations(range(len(vertices)), 3):
+            p, q, r = vertices[a], vertices[b], vertices[c]
+            u = tuple(q[i] - p[i] for i in range(3))
+            v = tuple(r[i] - p[i] for i in range(3))
+            n = (u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0])
+            sinais = []
+            for j, ponto in enumerate(vertices):
+                if j in (a, b, c):
+                    continue
+                d = sum(n[k] * (ponto[k] - p[k]) for k in range(3))
+                if abs(d) > 1e-7:
+                    sinais.append(d)
+            if sinais and (all(d > 0 for d in sinais) or all(d < 0 for d in sinais)):
+                faces.add((a, b, c))
+        return sorted(faces)
+
+    @staticmethod
+    def _ordenar_ao_redor(vertices, indices, eixo):
+        mag = math.sqrt(sum(x*x for x in eixo))
+        w = tuple(x/mag for x in eixo)
+        ref = (1, 0, 0) if abs(w[0]) < 0.8 else (0, 1, 0)
+        proj = sum(ref[i]*w[i] for i in range(3))
+        u = tuple(ref[i] - proj*w[i] for i in range(3))
+        mag_u = math.sqrt(sum(x*x for x in u))
+        u = tuple(x/mag_u for x in u)
+        v = (w[1]*u[2]-w[2]*u[1], w[2]*u[0]-w[0]*u[2], w[0]*u[1]-w[1]*u[0])
+        centro = tuple(sum(vertices[i][j] for i in indices)/len(indices) for j in range(3))
+        return sorted(indices, key=lambda i: math.atan2(
+            sum((vertices[i][j]-centro[j])*v[j] for j in range(3)),
+            sum((vertices[i][j]-centro[j])*u[j] for j in range(3))))
+
+    def _criar_formas(self):
+        formas = {}
+        cubo_v = [(-1,-1,-1),(1,-1,-1),(1,1,-1),(-1,1,-1),
+                  (-1,-1,1),(1,-1,1),(1,1,1),(-1,1,1)]
+        cubo_f = [(0,1,2,3),(4,7,6,5),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)]
+        formas["Cubo"] = (cubo_v, cubo_f)
+        formas["Tetraedro"] = ([(1,1,1),(-1,-1,1),(-1,1,-1),(1,-1,-1)],
+                                [(0,1,2),(0,3,1),(0,2,3),(1,3,2)])
+        octa_v = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]
+        formas["Octaedro"] = (octa_v, [(0,2,4),(2,1,4),(1,3,4),(3,0,4),
+                                       (2,0,5),(1,2,5),(3,1,5),(0,3,5)])
+
+        phi = (1 + math.sqrt(5)) / 2
+        ico_v = [(0,a,b*phi) for a in (-1,1) for b in (-1,1)]
+        ico_v += [(a,b*phi,0) for a in (-1,1) for b in (-1,1)]
+        ico_v += [(a*phi,0,b) for a in (-1,1) for b in (-1,1)]
+        ico_f = self._faces_icosaedro(ico_v)
+        formas["Icosaedro"] = (ico_v, ico_f)
+        dodeca_v = [tuple(sum(ico_v[i][k] for i in face)/3 for k in range(3)) for face in ico_f]
+        dodeca_f = []
+        for vi, eixo in enumerate(ico_v):
+            adj = [fi for fi, face in enumerate(ico_f) if vi in face]
+            dodeca_f.append(self._ordenar_ao_redor(dodeca_v, adj, eixo))
+        formas["Dodecaedro"] = (dodeca_v, dodeca_f)
+
+        pir_v = [(-1,-0.85,-1),(1,-0.85,-1),(1,-0.85,1),(-1,-0.85,1),(0,1.2,0)]
+        formas["Pirâmide"] = (pir_v, [(0,3,2,1),(0,1,4),(1,2,4),(2,3,4),(3,0,4)])
+        n = 6
+        prism_v = [(math.cos(2*math.pi*i/n), y, math.sin(2*math.pi*i/n))
+                   for y in (-0.8, 0.8) for i in range(n)]
+        prism_f = [tuple(reversed(range(n))), tuple(range(n, 2*n))]
+        prism_f += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+        formas["Prisma hexagonal"] = (prism_v, prism_f)
+        esfera_v, esfera_f = self._esfera(12, 20)
+        formas["Esfera"] = (esfera_v, esfera_f)
+        formas["Cilindro"] = self._cilindro(20)
+        formas["Cone"] = self._cone(20)
+        return formas
+
+    @staticmethod
+    def _esfera(rings, segments):
+        vertices = []
+        for j in range(1, rings):
+            lat = math.pi*j/rings
+            for i in range(segments):
+                lon = 2*math.pi*i/segments
+                vertices.append((math.sin(lat)*math.cos(lon), math.cos(lat), math.sin(lat)*math.sin(lon)))
+        top = len(vertices)
+        vertices.append((0,1,0))
+        bottom = len(vertices)
+        vertices.append((0,-1,0))
+        faces = []
+        for j in range(rings-2):
+            for i in range(segments):
+                a, b = j*segments+i, j*segments+(i+1)%segments
+                c, d = (j+1)*segments+(i+1)%segments, (j+1)*segments+i
+                faces.append((a,b,c,d))
+        for i in range(segments):
+            ni = (i+1)%segments
+            faces.append((top,ni,i))
+            faces.append((bottom,(rings-2)*segments+i,(rings-2)*segments+ni))
+        return vertices, faces
+
+    @staticmethod
+    def _cilindro(n):
+        v = [(math.cos(2*math.pi*i/n), y, math.sin(2*math.pi*i/n))
+             for y in (-0.9,0.9) for i in range(n)]
+        f = [tuple(reversed(range(n))), tuple(range(n,2*n))]
+        f += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+        return v, f
+
+    @staticmethod
+    def _cone(n):
+        v = [(math.cos(2*math.pi*i/n),-0.9,math.sin(2*math.pi*i/n)) for i in range(n)]
+        apex = len(v)
+        v.append((0,1.2,0))
+        f = [tuple(reversed(range(n)))] + [(i,(i+1)%n,apex) for i in range(n)]
+        return v, f
+
+    def _montar_interface(self):
+        self.sidebar = tk.Frame(self.root, bg=self.SIDEBAR, width=344, padx=22, pady=22)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+
+        topo = tk.Frame(self.sidebar, bg=self.SIDEBAR)
+        topo.pack(fill="x", pady=(0, 28))
+        logo = tk.Label(topo, text="⬡", bg="#2563eb", fg="white", width=3, height=1,
+                        font=("Segoe UI Symbol", 18, "bold"))
+        logo.pack(side="left", ipady=7, padx=(0, 13))
+        titulo = tk.Frame(topo, bg=self.SIDEBAR)
+        titulo.pack(side="left", fill="x", expand=True)
+        tk.Label(titulo, text="Visualizador 3D", bg=self.SIDEBAR, fg=self.TEXT,
+                 font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        tk.Label(titulo, text="Escolha um sólido para explorar", bg=self.SIDEBAR, fg=self.MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(3,0))
+
+        tk.Label(self.sidebar, text="BIBLIOTECA", bg=self.SIDEBAR, fg="#64748b",
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0,8))
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Biblioteca.Treeview", background=self.SIDEBAR, foreground="#cbd5e1",
+                        fieldbackground=self.SIDEBAR, borderwidth=0, rowheight=39,
+                        font=("Segoe UI", 9))
+        style.map("Biblioteca.Treeview", background=[("selected", "#202b3b")],
+                  foreground=[("selected", "#f8fafc")])
+        self.lista = ttk.Treeview(self.sidebar, style="Biblioteca.Treeview", show="tree",
+                                  selectmode="browse", height=22)
+        self.lista.pack(fill="both", expand=True)
+        for categoria, nomes in self.categorias.items():
+            cid = "categoria_" + categoria
+            self.lista.insert("", "end", iid=cid, text=categoria.upper(), open=True, tags=("categoria",))
+            for nome in nomes:
+                self.lista.insert(cid, "end", iid=nome, text=f"   ◇   {nome}")
+        self.lista.tag_configure("categoria", foreground="#71839e", font=("Segoe UI",8,"bold"))
+        self.lista.selection_set(self.figura_atual)
+        self.lista.bind("<<TreeviewSelect>>", self._selecionar_figura)
+        self.lista.bind("<Double-1>", lambda _e: self._centralizar())
+        tk.Label(self.sidebar, text="DICA  ·  arraste para girar  ·  role para aproximar",
+                 bg=self.SIDEBAR, fg="#64748b", font=("Segoe UI",8),
+                 wraplength=280, justify="left").pack(anchor="w", pady=(12,0))
+
+        self.viewport = tk.Frame(self.root, bg=self.BG)
+        self.viewport.pack(side="right", fill="both", expand=True)
+        self.canvas = tk.Canvas(self.viewport, bg="#0b1220", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self._inicio_arrasto)
+        self.canvas.bind("<B1-Motion>", self._arrastar)
+        self.canvas.bind("<MouseWheel>", self._scroll)
+        self.canvas.bind("<Button-4>", lambda _e: self._zoom(1.1))
+        self.canvas.bind("<Button-5>", lambda _e: self._zoom(1/1.1))
+        self.canvas.bind("<Configure>", self._agendar_desenho)
+
+        # Cartão flutuante com descrição e propriedades do sólido selecionado.
+        self.cartao = tk.Frame(self.viewport, bg="#101a29", padx=19, pady=16,
+                               highlightthickness=1, highlightbackground="#29384b")
+        self.cartao.place(x=20, y=20, width=410, height=202)
+        cab = tk.Frame(self.cartao, bg="#101a29")
+        cab.pack(fill="x")
+        tk.Label(cab, text="●", bg="#101a29", fg=self.ACCENT,
+                 font=("Segoe UI", 12)).pack(side="left", padx=(0,8))
+        self.nome_card = tk.Label(cab, text="", bg="#101a29", fg="#f8fafc",
+                                  font=("Segoe UI", 16, "bold"))
+        self.nome_card.pack(side="left")
+        self.desc_card = tk.Label(self.cartao, text="", bg="#101a29", fg="#a8b5c8",
+                                  font=("Segoe UI", 9), justify="left", wraplength=366)
+        self.desc_card.pack(fill="x", anchor="w", pady=(9,13))
+        tk.Frame(self.cartao, bg="#29384b", height=1).pack(fill="x")
+        stats = tk.Frame(self.cartao, bg="#101a29")
+        stats.pack(fill="x", pady=(10,0))
+        self.valores_stats = []
+        for rotulo in ("FACES", "ARESTAS", "VÉRTICES"):
+            celula = tk.Frame(stats, bg="#101a29")
+            celula.pack(side="left", fill="x", expand=True, anchor="w")
+            tk.Label(celula, text=rotulo, bg="#101a29", fg="#71839e",
+                     font=("Segoe UI",7,"bold")).pack(anchor="w")
+            valor = tk.Label(celula, text="", bg="#101a29", fg="#e8eef8",
+                             font=("Segoe UI",13,"bold"))
+            valor.pack(anchor="w", pady=(2,0))
+            self.valores_stats.append(valor)
+        self._atualizar_cartao()
+
+        self.toolbar = tk.Frame(self.viewport, bg="#152237", padx=13, pady=10,
+                                highlightthickness=1, highlightbackground="#2a3c55")
+        self.toolbar.place(relx=0.5, rely=1.0, anchor="s", y=-16)
+        self.botoes_modo = {}
+        for modo, icone in (("Sólido", "⬡"), ("Aramado", "▦"), ("Translúcido", "◌")):
+            botao = tk.Button(self.toolbar, text=f"{icone}  {modo}",
+                              command=lambda m=modo: self._definir_modo(m),
+                              relief="flat", cursor="hand2", padx=12, pady=8,
+                              font=("Segoe UI",9,"bold"), borderwidth=0)
+            botao.pack(side="left", padx=2)
+            self.botoes_modo[modo] = botao
+        tk.Frame(self.toolbar, bg="#314158", width=1).pack(side="left", fill="y", padx=9, pady=3)
+        self.botao_girar = tk.Button(self.toolbar, text="⟳  Girar",
+                                     command=self._alternar_rotacao, relief="flat",
+                                     cursor="hand2", padx=12, pady=8,
+                                     font=("Segoe UI",9,"bold"))
+        self.botao_girar.pack(side="left", padx=2)
+        self.botao_centralizar = tk.Button(self.toolbar, text="⛶  Centralizar",
+                                           command=self._centralizar, relief="flat",
+                                           cursor="hand2", padx=12, pady=8,
+                                           font=("Segoe UI",9,"bold"))
+        self.botao_centralizar.pack(side="left", padx=2)
+        self.botao_fullscreen = tk.Button(self.toolbar, text="⛶",
+                                          command=self._alternar_tela_cheia, relief="flat",
+                                          cursor="hand2", padx=10, pady=8,
+                                          font=("Segoe UI",10,"bold"))
+        self.botao_fullscreen.pack(side="left", padx=2)
+        self._atualizar_botoes_modo()
+
+    def _agendar_desenho(self, _evento=None):
+        if self._resize_job:
+            self.root.after_cancel(self._resize_job)
+        self._resize_job = self.root.after(35, self._desenhar)
+
+    def _atualizar_cartao(self):
+        self.nome_card.configure(text=self.figura_atual)
+        self.desc_card.configure(text=self.descricoes[self.figura_atual])
+        for label, valor in zip(self.valores_stats, self.estatisticas[self.figura_atual]):
+            label.configure(text=valor)
+
+    def _definir_modo(self, modo):
+        self.modo = modo
+        self._atualizar_botoes_modo()
+        self._desenhar()
+
+    def _atualizar_botoes_modo(self):
+        if not hasattr(self, "botoes_modo"):
+            return
+        for modo, botao in self.botoes_modo.items():
+            escolhido = modo == self.modo
+            botao.configure(bg="#34465e" if escolhido else "#152237",
+                            fg="#f8fafc" if escolhido else "#98a8bf",
+                            activebackground="#405571", activeforeground="white")
+        for botao in (getattr(self, "botao_girar", None),
+                      getattr(self, "botao_centralizar", None),
+                      getattr(self, "botao_fullscreen", None)):
+            if botao:
+                botao.configure(bg="#152237", fg="#cbd5e1",
+                                activebackground="#34465e", activeforeground="white")
+        if hasattr(self, "botao_girar"):
+            self.botao_girar.configure(text="⟳  Girando" if self.rotacao_automatica else "⟳  Girar",
+                                       fg="#7dd3fc" if self.rotacao_automatica else "#cbd5e1")
+
+    def _alternar_rotacao(self):
+        self.rotacao_automatica = not self.rotacao_automatica
+        self._atualizar_botoes_modo()
+
+    def _animar(self):
+        if self.rotacao_automatica:
+            self.angulo_y += 0.012
+            self._desenhar()
+        self.root.after(33, self._animar)
+
+    def _esta_tela_cheia(self):
+        valor = self.root.attributes("-fullscreen")
+        return str(valor).lower() in ("1", "true", "yes")
+
+    def _alternar_tela_cheia(self, _evento=None):
+        atual = self._esta_tela_cheia()
+        self.root.attributes("-fullscreen", not atual)
+        return "break"
+
+    def _sair_tela_cheia(self, _evento=None):
+        if self._esta_tela_cheia():
+            self.root.attributes("-fullscreen", False)
+            return "break"
+
+    def _inicio_arrasto(self, evento):
+        self.arrastando = True
+        self.ultimo_mouse = (evento.x, evento.y)
+
+    def _arrastar(self, evento):
+        if not self.arrastando:
+            return
+        x, y = self.ultimo_mouse
+        self.angulo_y += (evento.x-x) * 0.0035
+        self.angulo_x -= (evento.y-y) * 0.0035
+        self.ultimo_mouse = (evento.x, evento.y)
+        self._desenhar()
+
+    def _scroll(self, evento):
+        self._zoom(1.1 if evento.delta > 0 else 1/1.1)
+
+    def _zoom(self, fator):
+        self.zoom = max(0.4, min(2.8, self.zoom*fator))
+        self._desenhar()
+
+    def _selecionar_figura(self, _evento=None):
+        escolha = self.lista.selection()
+        if escolha and escolha[0] in self.formas:
+            self.figura_atual = escolha[0]
+            self._atualizar_cartao()
+            self._desenhar()
+
+    def _centralizar(self):
+        self.angulo_x, self.angulo_y, self.zoom = -0.34, 0.54, 1.0
+        self._desenhar()
+
+    def _desenhar_chao(self, cx, cy, escala):
+        limite, nivel, passos = 2.5, -1.25, 12
+        def ponto(x, z):
+            rx, ry, rz = self._transformar((x,nivel,z))
+            pers = 4.5/(4.5+rz)
+            return cx+rx*escala*pers, cy-ry*escala*pers
+        for i in range(passos+1):
+            val = -limite + 2*limite*i/passos
+            cor = "#26364d" if i in (0,passos) else "#172438"
+            a,b = ponto(val,-limite),ponto(val,limite)
+            c,d = ponto(-limite,val),ponto(limite,val)
+            self.canvas.create_line(*a,*b,fill=cor,width=1.5 if i in (0,passos) else 1)
+            self.canvas.create_line(*c,*d,fill=cor,width=1.5 if i in (0,passos) else 1)
+        o, x, z = ponto(0,0), ponto(limite,0), ponto(0,limite)
+        self.canvas.create_line(*o,*x,fill="#a65e68",width=2,arrow="last")
+        self.canvas.create_line(*o,*z,fill="#438e74",width=2,arrow="last")
+
+    @staticmethod
+    def _misturar_cor(base, intensidade):
+        rgb = [int(base[i:i+2],16) for i in (1,3,5)]
+        rgb = [max(0,min(255,int(c*intensidade))) for c in rgb]
+        return "#" + "".join(f"{c:02x}" for c in rgb)
+
+    def _sombra_face(self, face, vertices_transformados):
+        a,b,c = (vertices_transformados[face[i]] for i in range(3))
+        u = tuple(b[k]-a[k] for k in range(3))
+        v = tuple(c[k]-a[k] for k in range(3))
+        n = (u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+        mag = math.sqrt(sum(x*x for x in n)) or 1
+        light = (0.35,0.75,-0.55)
+        brilho = abs(sum(n[i]/mag*light[i] for i in range(3)))
+        return self._misturar_cor(self.OBJECT_COLOR, 0.56 + 0.55*brilho)
+
+    def _desenhar(self):
+        if not hasattr(self, "canvas"):
+            return
+        self.canvas.delete("all")
+        largura = max(self.canvas.winfo_width(), 320)
+        altura = max(self.canvas.winfo_height(), 320)
+        cx, cy = largura/2, altura*0.54
+        escala = min(largura, altura)*0.31*self.zoom
+        self._desenhar_chao(cx,cy,escala)
+
+        vertices, faces = self.formas[self.figura_atual]
+        transformados = [self._transformar(v) for v in vertices]
+        projetados = []
+        for x,y,z in transformados:
+            pers = 4.5/(4.5+z)
+            projetados.append((cx+x*escala*pers,cy-y*escala*pers))
+
+        arestas = self._arestas(faces)
+        if self.modo != "Aramado":
+            ordenadas = sorted(faces,key=lambda f: sum(transformados[i][2] for i in f)/len(f),reverse=True)
+            for face in ordenadas:
+                coords = [v for i in face for v in projetados[i]]
+                cor = self._sombra_face(face,transformados)
+                if self.modo == "Translúcido":
+                    self.canvas.create_polygon(*coords,fill=cor,outline="",stipple="gray50")
+                else:
+                    self.canvas.create_polygon(*coords,fill=cor,outline="")
+
+        cor_aresta = "#c9e4ff" if self.modo == "Aramado" else "#d8eaff"
+        largura_aresta = 1.7 if self.modo == "Aramado" else 1.15
+        for a,b in arestas:
+            self.canvas.create_line(*projetados[a],*projetados[b],fill=cor_aresta,
+                                    width=largura_aresta,capstyle="round")
+        for x,y in projetados:
+            self.canvas.create_oval(x-2.2,y-2.2,x+2.2,y+2.2,fill="#93c5fd",outline="")
+        self._atualizar_botoes_modo()
+
+
+    def _transformar(self, vertice):
+        x, y, z = vertice
+        cy, sy = math.cos(self.angulo_y), math.sin(self.angulo_y)
+        cx, sx = math.cos(self.angulo_x), math.sin(self.angulo_x)
+        x, z = x*cy - z*sy, x*sy + z*cy
+        y, z = y*cx - z*sx, y*sx + z*cx
+        return x, y, z
+
+
+def main():
+    root = tk.Tk()
+    Visualizador3D(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
